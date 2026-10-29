@@ -1,0 +1,8 @@
+{
+  "title": "Aula Bridge",
+  "config": {
+    "step": {"user": {"title": "Aula fra Railway", "description": "Brug gatewayens HTTPS-adresse og en separat Aula HA-nøgle. Brug aldrig din OpenAI- eller MitID-nøgle.", "data": {"url": "Gateway URL", "token": "Aula HA-nøgle"}}},
+    "error": {"invalid_auth": "Nøglen blev afvist.", "cannot_connect": "Kunne ikke kontakte gatewayen.", "invalid_url": "Brug gatewayens HTTPS-adresse uden sti, query eller loginoplysninger."},
+    "abort": {"single_instance_allowed": "Aula er allerede konfigureret."}
+  }
+}

@@ -1,0 +1,18 @@
+query:
+  name: Hent Aula-data
+  description: Kald et af de 19 tilladte læse-endpoints. Returnerer data uden at ændre Aula.
+  fields:
+    name:
+      name: Endpoint
+      required: true
+      example: aula.notifications.list
+      selector:
+        text:
+    arguments:
+      name: Argumenter
+      default: {}
+      selector:
+        object:
+snapshot:
+  name: Hent Aula-oversigt
+  description: Returnerer den senest hentede oversigt med status og tidspunkt pr. kilde.
