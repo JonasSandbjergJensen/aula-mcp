@@ -1,0 +1,10 @@
+.git
+node_modules
+**/node_modules
+.env
+.env.*
+**/.env
+**/.env.*
+**/tokens.json
+**/.key
+aula-bundle
