@@ -14,6 +14,7 @@ unset AULA_MCP_ALLOW_REMOTE
 server_pid=""
 tunnel_pid=""
 gateway_pid=""
+tailscale_pid=""
 if [[ "${AULA_HA_ENABLED:-0}" == "1" ]]; then
   : "${AULA_HA_TOKEN:?Set a separate AULA_HA_TOKEN for Home Assistant}"
   if [[ ${#AULA_HA_TOKEN} -lt 32 ]]; then
@@ -23,7 +24,7 @@ if [[ "${AULA_HA_ENABLED:-0}" == "1" ]]; then
 fi
 cleanup() {
   trap - EXIT
-  for pid in "$server_pid" "$tunnel_pid" "$gateway_pid"; do
+  for pid in "$server_pid" "$tunnel_pid" "$gateway_pid" "$tailscale_pid"; do
     if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; fi
   done
   wait 2>/dev/null || true
@@ -54,11 +55,15 @@ env -u AULA_HA_TOKEN tunnel-client run &
 tunnel_pid=$!
 pids=("$server_pid" "$tunnel_pid")
 if [[ "${AULA_HA_ENABLED:-0}" == "1" ]]; then
-  export AULA_HA_HOST=0.0.0.0
+  # HA is reachable only through the tailnet's Serve proxy, never Railway's edge.
+  export AULA_HA_HOST=127.0.0.1
   export AULA_HA_PORT=8081
   env -u CONTROL_PLANE_API_KEY node ha-bridge/deploy/ha-gateway.mjs &
   gateway_pid=$!
   pids+=("$gateway_pid")
+  env -u CONTROL_PLANE_API_KEY -u AULA_HA_TOKEN bash deploy/tailscale-start.sh &
+  tailscale_pid=$!
+  pids+=("$tailscale_pid")
 fi
 set +e
 wait -n "${pids[@]}"

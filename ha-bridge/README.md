@@ -43,24 +43,40 @@ hele Aula. Frister i fritekst/PDF bliver ikke automatisk fortolket som sikre dea
 Dashboardet viser de returnerede kalenderfrister og giver adgang til beskeder og bilag.
 Automatiske påmindelser kan bygges ovenpå efter installation og datakontrol.
 
-## Railway: slå HA-gatewayen til
+## Railway: privat forbindelse med Tailscale
 
-Disse trin gælder, når denne ændring er gennemgået og lagt på den gren, Railway bygger.
-Gatewayen er slukket som standard. Ingen Aula-tokens skal flyttes til HA.
+Gatewayen lytter kun på `127.0.0.1:8081`. Den eksisterende MCP lytter fortsat
+kun på `127.0.0.1:7878`. Der skal ikke oprettes Railway-domæne eller TCP-proxy.
+Tailscale Serve giver HTTPS-adgang på port 443 i det private tailnet.
+Funnel, subnetannoncering, exit node og Tailscale SSH bliver ikke slået til.
 
-1. Generér en separat nøgle lokalt med `openssl rand -hex 32`.
-   Gem den i din passwordmanager; send den ikke i chat eller GitHub.
-2. Opret `AULA_HA_TOKEN` i Railway Variables med nøglen.
-3. Sæt `AULA_HA_ENABLED=1`, og deploy den gennemgåede kode.
-4. Opret et Railway HTTPS-domæne med **target port 8081** til denne service.
-   Port 7878 er fortsat kun loopback og må ikke offentliggøres.
-   Brug ikke tunnel-id eller OpenAI-nøglen som HA-adresse/adgang.
-5. Gem HTTPS-adressen uden `/api/v1` til HA-opsætningen.
+1. Opret en personlig Tailscale-konto, og forbind HA med Tailscale-appen.
+2. Begræns tailnet-politikken, så kun HA må forbinde til `tag:aula-bridge` på TCP 443.
+   Tagget skal ejes af tailnet-administratorerne. Undlad en samtidig allow-all-regel.
+3. Opret en særskilt `AULA_HA_TOKEN` på mindst 32 tilfældige tegn i Railway.
+   Send ikke nøglen i chat eller GitHub. Sæt `AULA_HA_ENABLED=1`.
+4. Deploy den gennemgåede private kode. Tailscale starter i userspace-tilstand og
+   gemmer sin vedvarende nodeidentitet under `/data/tailscale` med begrænsede rettigheder.
+5. Følg loginlinket i Railway-loggen og godkend **aula-bridge** på din personlige konto.
+   Dette er en vedvarende node, ikke en ephemeral ressource. Nodeidentiteten genbruges
+   på tværs af deploys via volumenet. Login kan kræves igen ved nøgleudløb eller tilbagekaldelse.
+6. Hvis Serve viser et separat link til HTTPS-opsætning, godkendes det af kontoejeren.
+   Kontrollér, at godkendelsen gælder privat Serve; Funnel skal forblive deaktiveret.
+   HTTPS-certifikatets enhedsnavn kan indgå i offentlige certifikatregistre. Navnet er
+   derfor det generiske **aula-bridge**, ikke et familie- eller børnenavn.
+7. Brug serverens fulde `https://aula-bridge.…ts.net`-adresse i HA sammen med HA-nøglen.
+   Kontrollér, at HA Core selv kan nå adressen; en Connected-status i Tailscale er ikke
+   i sig selv bevis for, at HA Core kan bruge netværksforbindelsen og DNS.
 
-Alle gatewayruter kræver `Authorization: Bearer …`, inklusive status. Der skal ikke
-oprettes en offentlig healthcheck uden godkendelse. En besøgende uden nøgle får 401.
-Gatewayen tillader kun den faste liste ovenfor. Raw requests og Aula-skriveværktøjer
-er afvist, også hvis upstream senere får nye funktioner.
+HA og Railway kræver en korrekt afgrænset tailnet-politik. Enheden på Railway skal
+ikke have adgang til HA eller hjemmets subnet. Den private netværksadgang erstatter
+ikke gatewayens bearer-nøgle; begge kontroller bruges. Alle gatewayruter kræver nøglen,
+inklusive status. Nye upstream-værktøjer er afvist som standard.
+
+Under første login kan ChatGPT-tunnelen og loopback-gatewayen allerede køre, mens
+Tailscale venter på godkendelse. Det giver ingen offentlig adgang til gatewayen.
+Når Serve er oppe, skal adgang testes fra HA med korrekt og forkert nøgle samt fra
+et sted uden adgang til tailnettet, før forbindelsen meldes aktiv.
 
 ## Installation i HA
 
@@ -72,7 +88,7 @@ i Jonas' HA. Tag en normal HA-backup før installation af en ny custom integrati
 2. Kopiér `www/aula-dashboard-card.js` til `/config/www/aula-dashboard-card.js`.
 3. Genstart HA for at indlæse den nye integration.
 4. Under **Settings → Devices & services → Add integration**, vælg **Aula Bridge**.
-   Indtast Railway HTTPS-adressen og den separate `AULA_HA_TOKEN` lokalt i HA.
+   Indtast den private Tailscale HTTPS-adresse og den separate `AULA_HA_TOKEN` lokalt i HA.
    Nøglen gemmes i HA's config entry, ikke i Lovelace eller `www`.
 5. Tilføj `/local/aula-dashboard-card.js?v=1` som JavaScript module under
    dashboardets Resources. Slå Advanced mode til på HA-profilen, hvis Resources er skjult.
@@ -114,7 +130,7 @@ Fra repositoryroden:
 ```sh
 node --test ha-bridge/tests/*.test.mjs
 python -m unittest discover -s ha-bridge/tests -p 'test_*.py'
-bash -n deploy/railway-start.sh
+bash -n deploy/railway-start.sh deploy/tailscale-start.sh
 ```
 
 Testene bruger syntetiske data og en mock-MCP. De kontrollerer nøglekrav, afvisning af
@@ -122,7 +138,7 @@ skrive/raw-kald, sessionsrækkefølge, cache, kildefejl, tidszoner og HTML-escap
 Python-tests kontrollerer klientens URL-regler samt kalenderkonvertering med minimale
 HA-stubs; de erstatter ikke en rigtig HA-runtime-test.
 
-Deaktivér gatewayen med `AULA_HA_ENABLED=0`, fjern eventuelt HTTPS-domænet, og redeploy.
+Deaktivér gatewayen med `AULA_HA_ENABLED=0`, og redeploy. Fjern ved behov også Aula-noden i Tailscale.
 Den private ChatGPT-tunnel fortsætter via den eksisterende MCP. I HA kan integrationen
 og det separate Aula-dashboard fjernes. Ingen eksisterende dashboards ændres af filerne.
 
