@@ -60,6 +60,7 @@ if "serve" in args:
                 self.assertGreaterEqual(len(ups), 2)
                 self.assertIn("--accept-routes=false", ups[-1])
                 self.assertIn("--accept-dns=false", ups[-1])
+                self.assertIn("--timeout=0s", ups[-1])
                 serve = next(args for args in calls if "--bg" in args)
                 self.assertIn("http://127.0.0.1:8081", serve)
                 self.assertIn("--https=443", serve)

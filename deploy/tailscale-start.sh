@@ -30,7 +30,7 @@ if [[ "$ready" != 1 ]]; then echo "Tailscale socket was not ready" >&2; exit 1; 
 while true; do
   tailscale --socket="$socket" up --hostname=aula-bridge \
     --advertise-tags=tag:aula-bridge --accept-dns=false --accept-routes=false \
-    --timeout=60s &
+    --timeout=0s &
   client_pid=$!
   if wait "$client_pid"; then client_pid=""; break; fi
   client_pid=""
