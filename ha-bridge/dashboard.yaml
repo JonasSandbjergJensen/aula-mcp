@@ -1,0 +1,7 @@
+title: Aula
+views:
+  - title: Aula
+    path: overblik
+    type: panel
+    cards:
+      - type: custom:aula-dashboard-card
