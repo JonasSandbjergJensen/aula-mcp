@@ -16,3 +16,39 @@ query:
 snapshot:
   name: Hent Aula-oversigt
   description: Returnerer den senest hentede oversigt med status og tidspunkt pr. kilde.
+analysis_status:
+  name: Status for Aula-analyse
+  description: Viser aktivering, kildehistorik og analyseresultater.
+analysis_control:
+  name: Aktivér eller stop Aula-analyse
+  fields:
+    enabled:
+      required: true
+      selector:
+        boolean:
+    config:
+      name: Lokal familiekontekst
+      description: Barn, klasse, årgang, skole, skoleår, institutionskode, phone_services og guardian_ids. Gemmes kun i HA.
+      selector:
+        object:
+analysis_run:
+  name: Hent og analysér nye Aula-kilder
+  description: Kræver aktiveret analyse. Kilder siden installationen kontrolleres; eksisterende historik respekteres.
+analysis_test:
+  name: Test én Aula-kilde uden push
+  description: Analyserer ét opslag eller én samtale og viser resultatet i HA uden pushbeskeder.
+  fields:
+    kind:
+      required: true
+      selector:
+        select:
+          options:
+            - post
+            - thread
+    source_id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 9999999999
+          mode: box

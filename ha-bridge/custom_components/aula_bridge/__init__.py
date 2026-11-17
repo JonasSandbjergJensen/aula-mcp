@@ -8,6 +8,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .api import BridgeApi, BridgeError
 from .const import DOMAIN, PLATFORMS
 from .coordinator import AulaCoordinator
+from .analysis import AulaAnalysis
 
 
 class AulaView(HomeAssistantView):
@@ -82,6 +83,35 @@ async def async_setup(hass, config):
 
     hass.services.async_register(DOMAIN, "query", handle_query, supports_response=SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "snapshot", handle_snapshot, supports_response=SupportsResponse.ONLY)
+
+    def analysis():
+        coordinator = next(iter(hass.data.get(DOMAIN, {}).values()), None)
+        if coordinator is None:
+            raise HomeAssistantError("Aula Bridge is not configured")
+        return coordinator.analysis
+
+    async def handle_analysis_status(call):
+        return analysis().status()
+
+    async def handle_analysis_control(call):
+        enabled = call.data.get("enabled")
+        if type(enabled) is not bool:
+            raise HomeAssistantError("enabled must be true or false")
+        await analysis().control(enabled, call.data.get("config"))
+
+    async def handle_analysis_run(call):
+        manager = analysis()
+        if not manager.data["enabled"]:
+            raise HomeAssistantError("Aula analysis is disabled")
+        return await manager.scan()
+
+    async def handle_analysis_test(call):
+        return await analysis().test_source(call.data.get("kind"), call.data.get("source_id"))
+
+    hass.services.async_register(DOMAIN, "analysis_status", handle_analysis_status, supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(DOMAIN, "analysis_control", handle_analysis_control)
+    hass.services.async_register(DOMAIN, "analysis_run", handle_analysis_run, supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(DOMAIN, "analysis_test", handle_analysis_test, supports_response=SupportsResponse.ONLY)
     return True
 
 
@@ -90,6 +120,8 @@ async def async_setup_entry(hass, entry):
     coordinator = AulaCoordinator(hass, api)
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    coordinator.analysis = AulaAnalysis(hass, coordinator, entry.entry_id)
+    await coordinator.analysis.start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -97,5 +129,6 @@ async def async_setup_entry(hass, entry):
 async def async_unload_entry(hass, entry):
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
+        await hass.data[DOMAIN][entry.entry_id].analysis.stop()
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unloaded
