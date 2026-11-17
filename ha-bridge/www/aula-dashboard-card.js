@@ -7,18 +7,85 @@ const aulaLabels = {calendar:'Kalender',messages:'Beskeder',posts:'Opslag',prese
 const aulaArray = data => { if (Array.isArray(data)) return data; for (const key of ['threads','items','posts','events','data']) if (Array.isArray(data?.[key])) return data[key]; return []; };
 
 class AulaDashboardCard extends HTMLElement {
-  setConfig(config) { this.config = config; if (!this.shadowRoot) this.attachShadow({mode:'open'}); this.tab = 'overblik'; this.child = 'all'; this.page = 0; this.lessons = false; }
-  set hass(value) { this._hass = value; if (!this.started && this.isConnected) this.start(); }
+  setConfig(config) { this.config = config; if (!this.shadowRoot) this.attachShadow({mode:'open'}); this.tab = 'indbakke'; this.inboxFilter = 'unread'; this.child = 'all'; this.page = 0; this.lessons = false; }
+  set hass(value) {
+    const changed = this._hass?.user?.id !== value.user?.id;
+    this._hass = value;
+    if (changed) { this.inboxData = null; this.inboxError = null; this.shadowRoot?.querySelector('.reader')?.remove(); }
+    if (!this.started && this.isConnected) this.start();
+    else if (changed && this.started) this.load();
+  }
   connectedCallback() { if (this._hass) this.start(); }
   disconnectedCallback() { clearInterval(this.timer); this.started = false; }
   getCardSize() { return 15; }
   start() { if (this.started) return; this.started = true; this.load(); this.timer = setInterval(() => this.load(), 60000); }
   async load() {
+    if (this.inboxUpdating) return;
+    const generation = this.loadGeneration = (this.loadGeneration || 0) + 1;
+    const owner = this._hass;
     try {
-      const result = await this._hass.callApi('GET','aula_bridge/snapshot');
+      const result = await owner.callApi('GET','aula_bridge/snapshot');
+      if (generation !== this.loadGeneration || owner.user?.id !== this._hass.user?.id) return;
       this.snapshot = result.snapshot; this.available = result.available; this.error = null;
     } catch { this.error = 'Aula-data kunne ikke hentes. Kontrollér Aula Bridge under Settings → Devices & services.'; }
+    await this.loadInbox(generation, owner);
     if (!this.shadowRoot?.querySelector('.reader') && !this.shadowRoot?.querySelector('#tools-details[open]')) this.render();
+  }
+  async loadInbox(generation, owner) {
+    try {
+      const data = await owner.callApi('GET', 'aula_bridge/inbox');
+      if (generation !== this.loadGeneration || owner.user?.id !== this._hass.user?.id) return;
+      this.inboxData = data; this.inboxError = null;
+    } catch {
+      if (generation !== this.loadGeneration || owner.user?.id !== this._hass.user?.id) return;
+      this.inboxError = 'Din indbakke kunne ikke hentes. Prøv Opdatér. Læststatus er ikke ændret.';
+    }
+  }
+  inboxItems() {
+    return (this.inboxData?.items || []).filter(item => this.inboxFilter === 'archive'
+      ? item.archived : !item.archived && (this.inboxFilter === 'all' || !item.read));
+  }
+  inbox() {
+    const items = this.inboxItems();
+    return `<div class="section-title"><h2>Din Aula-indbakke</h2><span class="pill">${Number(this.inboxData?.unread || 0)} ulæste</span></div>
+      <p class="muted">${escapeAula(this._hass?.user?.name || 'Din bruger')} · Læst og arkiveret gælder kun dig. Beskederne bliver liggende hos den anden.</p>
+      <div class="inbox-filters" role="group" aria-label="Indbakkefilter">${[['unread','Ulæste'],['all','Alle'],['archive','Arkiv']].map(([id,label])=>`<button data-inbox-filter="${id}" aria-pressed="${this.inboxFilter===id}">${label}</button>`).join('')}</div>
+      ${this.inboxError ? `<div class="warning" role="alert">${escapeAula(this.inboxError)}</div>` : ''}
+      ${this.inboxData?.error ? '<div class="warning">Aula-kontrollen har registreret en fejl. Oversigten kan mangle nye beskeder; kontrollér også Aula.</div>' : ''}
+      ${this.inboxData?.enabled === false ? '<div class="warning">Automatisk Aula-analyse er slået fra.</div>' : ''}
+      ${items.map(item=>{const r=item.result || {};return `<article class="inbox-item ${item.read?'':'unread'}"><div class="when">${escapeAula(aulaDate(item.created))}${item.test?' · Prøveanalyse':''}${item.state!=='ok'?' · Kræver gennemlæsning':''}</div><h3>${escapeAula(r.title || 'Aula · kræver gennemlæsning')}</h3><p class="text">${escapeAula(r.notification || 'Kilden kunne ikke analyseres sikkert. Læs den i Aula.')}</p><div class="inbox-actions"><button data-inbox-open="${escapeAula(item.id)}">Læs besked</button>${!item.archived && item.read?`<button data-inbox-action="unread" data-inbox-id="${escapeAula(item.id)}">Markér ulæst</button>`:''}<button data-inbox-action="${item.archived?'restore':'archive'}" data-inbox-id="${escapeAula(item.id)}">${item.archived?'Gendan':'Arkivér hos mig'}</button></div></article>`;}).join('')}
+      ${!items.length && !this.inboxError ? `<div class="empty">${!this.inboxData?'Henter din indbakke…':this.inboxFilter==='archive'?'Dit arkiv er tomt.':this.inboxFilter==='unread'?'Du har ingen ulæste beskeder.':'Din indbakke er tom.'}</div>`:''}
+      <p class="muted">${this.inboxData?.last_scan?'Seneste automatiske kontrol: '+escapeAula(aulaDate(this.inboxData.last_scan)):''}</p>`;
+  }
+  async updateInbox(id, action, render = true) {
+    if (this.inboxUpdating) return false;
+    this.inboxUpdating = true;
+    const owner = this._hass;
+    this.loadGeneration = (this.loadGeneration || 0) + 1; // Discard older polls.
+    try {
+      const data = await owner.callApi('POST', 'aula_bridge/inbox', {id, action});
+      if (owner.user?.id !== this._hass.user?.id) return false;
+      this.inboxData = data; this.inboxError = null;
+      if (render) this.render();
+      return true;
+    } catch {
+      if (owner.user?.id !== this._hass.user?.id) return false;
+      this.inboxError = 'Ændringen kunne ikke gemmes. Prøv igen; beskeden er ikke fjernet.';
+      if (render) this.render();
+      return false;
+    } finally { this.inboxUpdating = false; }
+  }
+  async readInbox(id) {
+    const item = this.inboxData?.items.find(item=>item.id===id);
+    if (!item) return;
+    const r = item.result || {};
+    const saved = await this.updateInbox(id, 'read', false);
+    if (!saved) { this.render(); return; }
+    this.reader(r.title || 'Aula · kræver gennemlæsning',
+      `<p class="text">${escapeAula(r.summary || 'Kilden kunne ikke analyseres sikkert. Læs den i Aula.')}</p>
+      ${(r.actions || []).length?'<h3>Det skal I gøre</h3>':''}${(r.actions || []).map(a=>`<p class="text">${escapeAula(a.text)}${a.deadline?`<br><strong>Frist: ${escapeAula(a.deadline)}</strong>`:''}</p>`).join('')}
+      ${(r.uncertainties || []).length?'<h3>Kræver afklaring</h3>':''}${(r.uncertainties || []).map(t=>`<p class="text">${escapeAula(t)}</p>`).join('')}
+      <p class="muted">${escapeAula(item.source_id)}${item.test?' · Prøveanalyse':''}</p><p class="muted">Kun markeret læst hos dig.</p>`);
   }
   async call(name, args) {
     const result = await this._hass.callApi('POST','aula_bridge/call',{name, arguments:args});
@@ -73,9 +140,10 @@ class AulaDashboardCard extends HTMLElement {
   render() {
     if (!this.shadowRoot) return;
     const snapshot = this.snapshot;
-    const tabs = [['overblik','Overblik'],['beskeder','Beskeder'],['opslag','Opslag'],['planer','Planer og lektier'],['fremmode','Fremmøde'],['kilder','Datakilder']];
+    const tabs = [['indbakke',`Indbakke${this.inboxData?.unread?' · '+Number(this.inboxData.unread):''}`],['overblik','Overblik'],['beskeder','Beskeder'],['opslag','Opslag'],['planer','Planer og lektier'],['fremmode','Fremmøde'],['kilder','Datakilder']];
     let body = '';
     if (!snapshot) body = `<div class="empty">${escapeAula(this.error||'Henter Aula…')}</div>`;
+    else if (this.tab==='indbakke') body = this.inbox();
     else if (this.tab==='overblik') body = `${this.calendar()}<h2>Notifikationer</h2>${this.status('notifications')}${this.data(this.section('notifications').data)}`;
     else if (this.tab==='beskeder') body = this.messages();
     else if (this.tab==='opslag') body = this.posts();
@@ -84,11 +152,15 @@ class AulaDashboardCard extends HTMLElement {
     else body = this.sources();
     this.shadowRoot.innerHTML = `<style>
       :host{display:block;color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui);--accent:#b7c9a0}
+      .inbox-filters,.inbox-actions{display:flex;gap:8px;flex-wrap:wrap}.inbox-filters button[aria-pressed="true"]{background:var(--accent);color:#1d2919}.inbox-item.unread{border-left:3px solid var(--accent)}
       *{box-sizing:border-box} .shell{max-width:1400px;margin:auto;padding:28px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}.eyebrow{letter-spacing:.18em;text-transform:uppercase;color:var(--secondary-text-color);font-size:11px}h1{font-size:38px;letter-spacing:-.04em;margin:6px 0}h2{font-size:20px;font-weight:600;margin:18px 0}h3{font-size:15px;margin:5px 0}.muted,.when{color:var(--secondary-text-color);font-size:12px;line-height:1.6}.text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.65}.header-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}button,select{font:inherit;background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color);border-radius:10px;padding:10px 14px;cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}nav{display:flex;gap:6px;overflow:auto;padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--divider-color)}nav button{white-space:nowrap;border:0;background:transparent;font-size:13px}nav button.active{background:var(--accent);color:#1d2919}.section-title,.source{display:flex;align-items:center;justify-content:space-between;gap:16px}.toggle{display:flex;align-items:center;gap:7px;font-size:13px;white-space:nowrap}article,.record{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:14px;padding:18px;margin:10px 0}.record{border-radius:8px;padding:12px;background:transparent}.event{border-left:3px solid var(--accent)}.pill{display:inline-block;font-size:11px;border-radius:20px;background:var(--secondary-background-color);padding:5px 9px;margin:5px 4px 0 0}.urgent{background:#6f4628;color:#fff1d9}.warning{padding:14px;border:1px solid #9a663b;border-radius:10px;color:var(--primary-text-color);font-size:13px;margin:8px 0}.empty{padding:28px 14px;text-align:center;color:var(--secondary-text-color);font-size:14px}.message{display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;margin:10px 0;padding:18px}.message p{max-width:850px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.paging{display:flex;gap:10px;margin-top:18px}details{padding:10px 0}summary{cursor:pointer;font-size:13px;color:var(--secondary-text-color)}.field{display:flex;align-items:baseline;gap:12px;padding:5px 0;border-bottom:1px solid var(--divider-color)}.label{min-width:110px;font-size:11px;color:var(--secondary-text-color);overflow-wrap:anywhere}.reader{position:fixed;inset:0;background:#0009;z-index:100;display:flex;justify-content:flex-end}.reader-panel{width:min(780px,100%);height:100%;overflow:auto;background:var(--primary-background-color);padding:28px}.reader-head{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--primary-background-color);padding:10px 0}.tools{display:grid;gap:10px}textarea{width:100%;min-height:100px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);padding:12px;border-radius:8px}.toast{padding:12px 0;font-size:13px;color:var(--secondary-text-color)}@media(max-width:700px){.shell{padding:16px}header{align-items:flex-start;flex-direction:column}h1{font-size:30px}.section-title{align-items:flex-start;flex-direction:column;gap:0}.field{display:block}.label{display:block}article{padding:14px}.reader-panel{padding:16px}}
       </style><div class="shell"><header><div><div class="eyebrow">Familien · Aula</div><h1>Skole & hverdag</h1><div class="muted">${snapshot?'Senest hentet '+escapeAula(aulaDate(snapshot.fetched_at)):'Forbinder til Aula'}</div></div><div class="header-actions"><select id="child" aria-label="Kalenderfilter"><option value="all">Kalender: begge børn</option>${(snapshot?.manifest?.children||[]).map(c=>`<option value="${c.id}" ${this.child===String(c.id)?'selected':''}>Kalender: ${escapeAula(c.name.split(' ')[0])}</option>`).join('')}</select><button id="refresh">Opdatér</button></div></header>${this.error||this.available===false?`<div class="warning">${escapeAula(this.error||'Forbindelsen er afbrudt. Data nedenfor kan være forældede.')}</div>`:''}<nav>${tabs.map(([id,label])=>`<button data-tab="${id}" class="${this.tab===id?'active':''}">${label}</button>`).join('')}</nav><main>${body}</main><div class="toast">${escapeAula(this.notice||'')}</div>${this.lastAttachment?'<button id="read-pdf">Læs seneste PDF-bilag som tekst</button>':''}</div>`;
     this.bind();
   }
   bind() {
+    this.shadowRoot.querySelectorAll('[data-inbox-filter]').forEach(el=>el.onclick=()=>{this.inboxFilter=el.dataset.inboxFilter;this.render();});
+    this.shadowRoot.querySelectorAll('[data-inbox-open]').forEach(el=>el.onclick=()=>this.readInbox(el.dataset.inboxOpen));
+    this.shadowRoot.querySelectorAll('[data-inbox-action]').forEach(el=>el.onclick=async()=>{el.disabled=true;await this.updateInbox(el.dataset.inboxId,el.dataset.inboxAction);});
     this.shadowRoot.querySelectorAll('[data-tab]').forEach(el=>el.onclick=()=>{this.tab=el.dataset.tab;this.render();});
     this.shadowRoot.querySelector('#child').onchange=e=>{this.child=e.target.value;this.render();};
     this.shadowRoot.querySelector('#refresh').onclick=async()=>{try{await this._hass.callApi('POST','aula_bridge/refresh',{});await this.load();}catch{this.notice='Opdatering mislykkedes.';this.render();}};
@@ -133,3 +205,4 @@ class AulaDashboardCard extends HTMLElement {
 customElements.define('aula-dashboard-card',AulaDashboardCard);
 window.customCards=window.customCards||[];
 window.customCards.push({type:'aula-dashboard-card',name:'Aula dashboard',description:'Separat familieoversigt med alle tilgængelige Aula-læsekilder.'});
+

@@ -60,8 +60,52 @@ class AulaView(HomeAssistantView):
             return self.json({"error": "upstream_unavailable"}, status_code=502)
 
 
+class AulaInboxView(HomeAssistantView):
+    """Reading state is scoped to the authenticated HA user, never a body ID."""
+
+    url = "/api/aula_bridge/inbox"
+    name = "api:aula_bridge:inbox"
+    requires_auth = True
+    max_body_size = 4096
+
+    def manager(self, request):
+        entries = request.app[KEY_HASS].data.get(DOMAIN, {})
+        coordinator = next(iter(entries.values()), None)
+        return coordinator.analysis if coordinator else None
+
+    async def get(self, request):
+        user = request.get("hass_user")
+        if user is None:
+            return self.json({"error": "authentication_required"}, status_code=401)
+        manager = self.manager(request)
+        if manager is None:
+            return self.json({"error": "not_configured"}, status_code=503)
+        return self.json(manager.inbox(user.id), headers={"Cache-Control": "no-store"})
+
+    async def post(self, request):
+        user = request.get("hass_user")
+        if user is None:
+            return self.json({"error": "authentication_required"}, status_code=401)
+        manager = self.manager(request)
+        if manager is None:
+            return self.json({"error": "not_configured"}, status_code=503)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) != {"id", "action"}:
+                raise ValueError("invalid_request")
+            if not isinstance(body["id"], str) or not isinstance(body["action"], str):
+                raise ValueError("invalid_request")
+            result = await manager.inbox_update(user.id, body["id"], body["action"])
+            return self.json(result, headers={"Cache-Control": "no-store"})
+        except ValueError:
+            return self.json({"error": "invalid_request"}, status_code=400)
+        except KeyError:
+            return self.json({"error": "item_not_found"}, status_code=404)
+
+
 async def async_setup(hass, config):
     hass.http.register_view(AulaView())
+    hass.http.register_view(AulaInboxView())
 
     async def handle_query(call):
         coordinator = next(iter(hass.data.get(DOMAIN, {}).values()), None)
@@ -132,3 +176,4 @@ async def async_unload_entry(hass, entry):
         await hass.data[DOMAIN][entry.entry_id].analysis.stop()
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unloaded
+

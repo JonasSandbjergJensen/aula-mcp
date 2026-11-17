@@ -4,6 +4,7 @@ Disabled until explicitly enabled. No credentials, raw files or recipient lists
 are sent to the model. Only source text and a minimal family context are sent.
 """
 import asyncio
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from html import unescape
@@ -122,6 +123,7 @@ class AulaAnalysis:
         self.store = Store(hass, 1, "aula_analysis_" + entry_id)
         self.data = {"enabled": False, "since": now_iso(), "records": {}, "last_scan": None, "config": {}}
         self.lock = asyncio.Lock()
+        self.inbox_lock = asyncio.Lock()
         self.waiters = {}
         self.unsub = []
         self.task = None
@@ -357,10 +359,8 @@ class AulaAnalysis:
                 result["uncertainties"] += source["incomplete"]
             record.update(state=result["status"], result=result)
             await self.save()
-            if result["relevance"] != "none" or result["status"] != "ok":
-                await self.notice(result["title"], result["summary"] + "\n\n" +
-                                  "\n".join("• " + a["text"] for a in result["actions"]) +
-                                  "\n\n" + "\n".join(result["uncertainties"]), "aula_analysis_" + key)
+            # Results live in the personal inbox. Global HA notifications can
+            # be dismissed by any user and cannot represent personal reading.
             if self.data["enabled"] and not test and not record.get("duplicate_result") and result["status"] == "ok" and result["relevance"] == "action":
                 await self.deliver(record, result["title"], result["notification"])
             elif self.data["enabled"] and not test and result["status"] == "needs_review":
@@ -368,13 +368,69 @@ class AulaAnalysis:
         except Exception as err:
             record.update(state="needs_review", error=type(err).__name__)
             await self.save()
-            await self.notice("Aula · kræver gennemlæsning", "En ny kilde kunne ikke analyseres sikkert. Læs den i Aula: " + record["source_id"], "aula_analysis_" + key)
             if self.data["enabled"] and not test:
                 await self.deliver(record, "Kræver gennemlæsning", "En ny Aula-kilde kunne ikke analyseres sikkert. Åbn Aula og læs den.")
 
     async def notice(self, title, message, notification_id):
         await self.hass.services.async_call("persistent_notification", "create", {
             "title": title, "message": message, "notification_id": notification_id}, blocking=True)
+
+    def inbox(self, user_id):
+        """Return only this HA user's reading state; never other users or config."""
+        if not isinstance(user_id, str) or not user_id:
+            raise ValueError("authentication_required")
+        personal = self.data.get("inbox_users", {}).get(user_id, {})
+        latest = {}
+        for key, record in self.data["records"].items():
+            if record.get("superseded") or record.get("state") == "processing":
+                continue
+            source_id = record["source_id"]
+            # Prefer real analyses over earlier/later tests of the same source.
+            rank = (not record.get("test", False), record.get("created", ""), key)
+            if source_id not in latest or rank > latest[source_id][0]:
+                latest[source_id] = (rank, key, record)
+        items = []
+        for _, key, record in latest.values():
+            result = record.get("result") or {}
+            if record.get("state") == "ok" and result.get("relevance") == "none":
+                continue
+            state = personal.get(key, {})
+            items.append({"id": key, "source_id": record["source_id"],
+                          "created": record.get("created"), "test": bool(record.get("test")),
+                          "state": record["state"], "result": deepcopy(result),
+                          "read": bool(state.get("read_at")),
+                          "archived": bool(state.get("archived_at"))})
+        items.sort(key=lambda item: (item["created"] or "", item["id"]), reverse=True)
+        return {"items": items, "unread": sum(not i["read"] and not i["archived"] for i in items),
+                "enabled": self.data["enabled"], "last_scan": self.data["last_scan"],
+                "error": bool(self.data.get("error"))}
+
+    async def inbox_update(self, user_id, item_id, action):
+        if not isinstance(user_id, str) or not user_id:
+            raise ValueError("authentication_required")
+        if action not in ("read", "unread", "archive", "restore"):
+            raise ValueError("invalid_action")
+        async with self.inbox_lock:
+            if item_id not in {item["id"] for item in self.inbox(user_id)["items"]}:
+                raise KeyError("item_not_found")
+            users = self.data.setdefault("inbox_users", {})
+            state = users.setdefault(user_id, {}).setdefault(item_id, {})
+            previous = dict(state)
+            if action == "read":
+                state.setdefault("read_at", now_iso())
+            elif action == "unread":
+                state.pop("read_at", None)
+            elif action == "archive":
+                state.setdefault("archived_at", now_iso())
+            else:
+                state.pop("archived_at", None)
+            try:
+                await self.save()
+            except Exception:
+                state.clear()
+                state.update(previous)
+                raise
+            return self.inbox(user_id)
 
     async def deliver(self, record, title, message):
         for phone in self.data["config"]["phone_services"]:
@@ -409,3 +465,4 @@ class AulaAnalysis:
                 "records": [{"source_id": r["source_id"], "state": r["state"],
                              "test": r["test"], "error": r.get("error"), "result": r.get("result")}
                             for r in self.data["records"].values()]}
+
