@@ -102,3 +102,7 @@ Kør `python3 -m unittest discover -s ha-bridge/tests -p 'test_*.py' -v` og
 Testene dækker brugeradskillelse, HTTP-brugeridentitet, samtidige ændringer,
 vedvarende status, ny kildeversion, arkiv/gendannelse, gemmefejl, HTML-escaping,
 forældede svar og kontoskift. De emulerer ikke en kørende Home Assistant-installation.
+
+## Flere børn · 0.2.0
+
+Se [FAMILY.md](FAMILY.md) for adskilte skole-/børnehaveregler, madordning, lokal tilføjelse af børn og bagudkompatibel historik. Den eksisterende primære kontekst og telefoner bevares. Koden er ikke automatisk installeret eller aktiveret i HA.

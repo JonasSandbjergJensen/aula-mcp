@@ -19,6 +19,16 @@ snapshot:
 analysis_status:
   name: Status for Aula-analyse
   description: Viser aktivering, kildehistorik og analyseresultater.
+analysis_child:
+  name: Tilføj eller opdatér barnets analyseregler
+  description: Gemmer ét barns kontekst lokalt. Bevarer primært barn, telefoner, indbakke og aktivering. Starter ingen analyse og sender ingen beskeder.
+  fields:
+    child:
+      name: Barnets kontekst
+      description: id, child_name, stage (school/kindergarten), institution_names samt eventuelt institution_codes, profile_ids, shared_institution_names og meal_plan.
+      required: true
+      selector:
+        object:
 analysis_control:
   name: Aktivér eller stop Aula-analyse
   fields:
@@ -52,3 +62,4 @@ analysis_test:
           min: 1
           max: 9999999999
           mode: box
+

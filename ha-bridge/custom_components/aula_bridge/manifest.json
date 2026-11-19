@@ -1,7 +1,7 @@
 {
   "domain": "aula_bridge",
   "name": "Aula Bridge",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "config_flow": true,
   "documentation": "https://github.com/JonasSandbjergJensen/aula-mcp/tree/main/ha-bridge",
   "dependencies": ["http"],

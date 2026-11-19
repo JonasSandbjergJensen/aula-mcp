@@ -143,6 +143,9 @@ async def async_setup(hass, config):
             raise HomeAssistantError("enabled must be true or false")
         await analysis().control(enabled, call.data.get("config"))
 
+    async def handle_analysis_child(call):
+        return await analysis().upsert_child(call.data.get("child"))
+
     async def handle_analysis_run(call):
         manager = analysis()
         if not manager.data["enabled"]:
@@ -154,6 +157,7 @@ async def async_setup(hass, config):
 
     hass.services.async_register(DOMAIN, "analysis_status", handle_analysis_status, supports_response=SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "analysis_control", handle_analysis_control)
+    hass.services.async_register(DOMAIN, "analysis_child", handle_analysis_child, supports_response=SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "analysis_run", handle_analysis_run, supports_response=SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "analysis_test", handle_analysis_test, supports_response=SupportsResponse.ONLY)
     return True
